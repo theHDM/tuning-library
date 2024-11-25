@@ -454,363 +454,119 @@ inline Tuning::Tuning() : Tuning(evenTemperament12NoteScale(), KeyboardMapping()
 inline Tuning::Tuning(const Scale &s) : Tuning(s, KeyboardMapping()) {}
 inline Tuning::Tuning(const KeyboardMapping &k) : Tuning(evenTemperament12NoteScale(), k) {}
 
+inline unsigned modulo(int value, unsigned m) {
+  int mod = value % (int)m;
+  if (mod < 0) { mod += m; }
+  return mod;
+}
+
 inline Tuning::Tuning(const Scale &s_, const KeyboardMapping &k_, bool allowTuningCenterOnUnmapped_)
-    : allowTuningCenterOnUnmapped(allowTuningCenterOnUnmapped_)
-{
-    // Shadow on purpose to make sure we use the modified version from rotation - use for dev
-    // int *scale{0}, keyboardMapping{0};
-    this->scale = s_;
-    this->keyboardMapping = k_;
-
-    Scale s = s_;
-    KeyboardMapping k = k_;
-    int oSP;
-    if (s.count <= 0)
-        throw TuningError("Unable to tune to a scale with no notes. Your scale provided " +
-                          std::to_string(s.count) + " notes.");
-
-    int useMiddleNote{k.middleNote};
-    if (k.count > 0)
-    {
-        // Is the KBM not spanning the tuning note
-        auto mapStart = useMiddleNote;
-        auto mapEnd = useMiddleNote + k.count;
-        while (mapStart > k.tuningConstantNote)
-        {
-            useMiddleNote -= k.count;
-            mapStart = useMiddleNote;
-            mapEnd = useMiddleNote + k.count;
-            // throw std::logic_error("Blah");
-        }
-        while (mapEnd < k.tuningConstantNote)
-        {
-            useMiddleNote += k.count;
-            mapStart = useMiddleNote;
-            mapEnd = useMiddleNote + k.count;
-            // throw std::logic_error("Blah");
-        }
-    }
-
-    int kbmRotations{1};
-    for (const auto &kv : k.keys)
-    {
-        kbmRotations = std::max(kbmRotations, (int)std::ceil(1.0 * kv / s.count));
-    }
-
-    if (kbmRotations > 1)
-    {
-        // This means the KBM has mapped note 5 in a 4 note scale or some such
-        // which implies an 'unwrap' operation. So what we are going to do is
-        // create a new scale which is extended then update the kbm octave position
-        // accordingly.
-        Scale newS = s;
-        newS.count = s.count * kbmRotations;
-        auto backCents = s.tones.back().cents;
-        auto pushOff = backCents;
-        for (int i = 1; i < kbmRotations; ++i)
-        {
-            for (const auto &t : s.tones)
-            {
-                Tunings::Tone tCopy = t;
-                tCopy.type = Tone::kToneCents;
-                tCopy.cents += pushOff;
-                tCopy.floatValue = tCopy.cents / 1200.0 + 1;
-
-                newS.tones.push_back(tCopy);
-            }
-            pushOff += backCents;
-        }
-        s = newS;
-        k.octaveDegrees *= kbmRotations;
-        if (k.octaveDegrees == 0)
-            k.octaveDegrees = s.count;
-    }
-
-    // From the KBM Spec: When not all scale degrees need to be mapped, the size of the map can be
-    // smaller than the size of the scale.
-    if (k.octaveDegrees > s.count)
-    {
-        throw TuningError("Unable to apply mapping of size " + std::to_string(k.octaveDegrees) +
-                          " to smaller scale of size " + std::to_string(s.count));
-    }
-
-    int posPitch0 = 256 + k.tuningConstantNote;
-    int posScale0 = 256 + useMiddleNote;
-
-    double pitchMod = log(k.tuningPitch) / log(2) - 1;
-
-    int scalePositionOfTuningNote = k.tuningConstantNote - useMiddleNote;
-    if (k.count > 0)
-    {
-        while (scalePositionOfTuningNote >= k.count)
-        {
-            scalePositionOfTuningNote -= k.count;
-        }
-        while (scalePositionOfTuningNote < 0)
-        {
-            scalePositionOfTuningNote += k.count;
-        }
-        oSP = scalePositionOfTuningNote;
-        scalePositionOfTuningNote = k.keys[scalePositionOfTuningNote];
-        if (scalePositionOfTuningNote == -1 && !allowTuningCenterOnUnmapped)
-        {
-            std::string s = "Keyboard mapping is tuning an unmapped key. ";
-            s += "Your tuning mapping is mapping key " + std::to_string(k.tuningConstantNote) +
-                 " as " + "the tuning constant note, but that is scale note " +
-                 std::to_string(oSP) + " given your scale root of " + std::to_string(k.middleNote) +
-                 " which your mapping does not assign. Please set your tuning constant "
-                 "note to a mapped key.";
-            throw TuningError(s);
-        }
-    }
-    double tuningCenterPitchOffset;
-    if (scalePositionOfTuningNote == 0)
-        tuningCenterPitchOffset = 0;
-    else
-    {
-        if (scalePositionOfTuningNote == -1 && allowTuningCenterOnUnmapped)
-        {
-            int low, high;
-            bool octave_up = false;
-            bool octave_down = false;
-            float pitch_high;
-            float pitch_low;
-            // find next closest mapped note
-            for (int i = oSP - 1; i != oSP; i = (i - 1) % k.count)
-            {
-                if (k.keys[i] != -1)
-                {
-                    low = k.keys[i];
-                    break;
-                }
-
-                if (i > oSP)
-                {
-                    octave_down = true;
-                }
-            }
-            for (int i = oSP + 1; i != oSP; i = (i + 1) % k.count)
-            {
-                if (k.keys[i] != -1)
-                {
-                    high = k.keys[i];
-                    break;
-                }
-
-                if (i < oSP)
-                {
-                    octave_up = true;
-                }
-            }
-
-            // determine high and low pitches
-            double dt = s.tones[s.count - 1].cents;
-            pitch_low =
-                octave_down ? s.tones[low - 1].cents - dt : s.tones[low - 1].floatValue - 1.0;
-            pitch_high =
-                octave_up ? s.tones[high - 1].cents + dt : s.tones[high - 1].floatValue - 1.0;
-            tuningCenterPitchOffset = (pitch_high + pitch_low) / 2.f;
-        }
-        else
-        {
-            double tshift = 0;
-            double dt = s.tones[s.count - 1].floatValue - 1.0;
-            while (scalePositionOfTuningNote < 0)
-            {
-                scalePositionOfTuningNote += s.count;
-                tshift += dt;
-            }
-            while (scalePositionOfTuningNote > s.count)
-            {
-                scalePositionOfTuningNote -= s.count;
-                tshift -= dt;
-            }
-
-            if (scalePositionOfTuningNote == 0)
-                tuningCenterPitchOffset = -tshift;
-            else
-                tuningCenterPitchOffset =
-                    s.tones[scalePositionOfTuningNote - 1].floatValue - 1.0 - tshift;
-        }
-    }
-
-    double pitches[N];
-
-    for (int i = 0; i < N; ++i)
-    {
-        // TODO: ScaleCenter and PitchCenter are now two different notes.
-        int distanceFromPitch0 = i - posPitch0;
-        int distanceFromScale0 = i - posScale0;
-
-        if (distanceFromPitch0 == 0)
-        {
-            pitches[i] = 1;
-            lptable[i] = pitches[i] + pitchMod;
-            ptable[i] = pow(2.0, lptable[i]);
-
-            if (k.count > 0)
-            {
-                int mappingKey = distanceFromScale0 % k.count;
-                if (mappingKey < 0)
-                    mappingKey += k.count;
-
-                int cm = k.keys[mappingKey];
-                if (!allowTuningCenterOnUnmapped && cm < 0)
-                {
-                    std::string s = "Keyboard mapping is tuning an unmapped key. ";
-                    s += "Your tuning mapping is mapping key " + std::to_string(posPitch0 - 256) +
-                         " as " + "the tuning constant note, but that is scale note " +
-                         std::to_string(mappingKey) + " given your scale root of " +
-                         std::to_string(k.middleNote) +
-                         " which your mapping does not assign. Please set your tuning constant "
-                         "note to a mapped key.";
-                    throw TuningError(s);
-                }
-            }
-            scalepositiontable[i] = scalePositionOfTuningNote % s.count;
-#if DEBUG_SCALES
-            std::cout << "PITCH: i=" << i << " n=" << i - 256 << " p=" << pitches[i]
-                      << " lp=" << lptable[i] << " tp=" << ptable[i]
-                      << " fr=" << ptable[i] * 8.175798915 << std::endl;
-#endif
-        }
-        else
-        {
-            /*
-              We used to have this which assumed 1-12
-              Now we have our note number, our distance from the
-              center note, and the key remapping
-              int rounds = (distanceFromScale0-1) / s.count;
-              int thisRound = (distanceFromScale0-1) % s.count;
-            */
-
-            int rounds;
-            int thisRound;
-            int disable = false;
-            if (k.count == 0)
-            {
-                rounds = (distanceFromScale0 - 1) / s.count;
-                thisRound = (distanceFromScale0 - 1) % s.count;
-            }
-            else
-            {
-                /*
-                ** Now we have this situation. We are at note i so we
-                ** are m away from the center note which is distanceFromScale0
-                **
-                ** If we mod that by the mapping size we know which note we are on
-                */
-                int mappingKey = distanceFromScale0 % k.count;
-                int rotations = 0;
-                if (mappingKey < 0)
-                {
-                    mappingKey += k.count;
-                }
-                // Now have we gone off the end
-                int dt = distanceFromScale0;
-                if (dt > 0)
-                {
-                    while (dt >= k.count)
-                    {
-                        dt -= k.count;
-                        rotations++;
-                    }
-                }
-                else
-                {
-                    while (dt < 0)
-                    {
-                        dt += k.count;
-                        rotations--;
-                    }
-                }
-
-                int cm = k.keys[mappingKey];
-
-                int push = 0;
-                if (cm < 0)
-                {
-                    disable = true;
-                }
-                else
-                {
-                    if (cm > s.count)
-                    {
-                        throw TuningError(std::string(
-                            "Mapping KBM note longer than scale; key=" + std::to_string(cm) +
-                            " scale count=" + std::to_string(s.count)));
-                    }
-                    push = mappingKey - cm;
-                }
-
-                if (k.octaveDegrees > 0 && k.octaveDegrees != k.count)
-                {
-                    rounds = rotations;
-                    thisRound = cm - 1;
-                    if (thisRound < 0)
-                    {
-                        thisRound = k.octaveDegrees - 1;
-                        rounds--;
-                    }
-                }
-                else
-                {
-                    rounds = (distanceFromScale0 - push - 1) / s.count;
-                    thisRound = (distanceFromScale0 - push - 1) % s.count;
-                }
-
-#ifdef DEBUG_SCALES
-                if (i > 256 + 53 && i < 265 + 85)
-                    std::cout << "MAPPING n=" << i - 256 << " pushes ds0=" << distanceFromScale0
-                              << " cmc=" << k.count << " tr=" << thisRound << " r=" << rounds
-                              << " mk=" << mappingKey << " cm=" << cm << " push=" << push
-                              << " dis=" << disable << " mk-p-1=" << mappingKey - push - 1
-                              << " rotations=" << rotations << " od=" << k.octaveDegrees
-                              << std::endl;
-#endif
-            }
-
-            if (thisRound < 0)
-            {
-                thisRound += s.count;
-                rounds -= 1;
-            }
-
-            if (disable)
-            {
-                pitches[i] = 0;
-                scalepositiontable[i] = -1;
-            }
-            else
-            {
-                pitches[i] = s.tones[thisRound].floatValue +
-                             rounds * (s.tones[s.count - 1].floatValue - 1.0) -
-                             tuningCenterPitchOffset;
-                scalepositiontable[i] = (thisRound + 1) % s.count;
-            }
-
-            lptable[i] = pitches[i] + pitchMod;
-            ptable[i] = pow(2.0, pitches[i] + pitchMod);
-
-#if DEBUG_SCALES
-            if (i > 296 && i < 340)
-                std::cout << "PITCH: i=" << i << " n=" << i - 256 << " ds0=" << distanceFromScale0
-                          << " dp0=" << distanceFromPitch0 << " r=" << rounds << " t=" << thisRound
-                          << " p=" << pitches[i] << " t=" << s.tones[thisRound].floatValue
-                          << " c=" << s.tones[thisRound].cents << " dis=" << disable
-                          << " tp=" << ptable[i] << " fr=" << ptable[i] * 8.175798915 << " tcpo="
-                          << tuningCenterPitchOffset
-
-                          //<< " l2p=" << log(otp)/log(2.0)
-                          //<< " l2p-p=" << log(otp)/log(2.0) - pitches[i] - rounds - 3
-                          << std::endl;
-#endif
-        }
-    }
-
+: allowTuningCenterOnUnmapped(allowTuningCenterOnUnmapped_) {
+  /*
+  ** For purposes of this tuning table,
+  ** IGNORE the firstMIDI and lastMIDI range.
+  ** Attempt to assign pitches and degrees to
+  ** all possible keys to allow for modulation.
+  */
+  this->scale = s_;
+  if (s_.count <= 0)
+    throw TuningError(
+      "Unable to tune to a scale with no notes. Your scale provided " +
+      std::to_string(s_.count) + " notes."
+    );
+  Scale s = s_; // in case we need to modify a copy as we go
+  this->keyboardMapping = k_;
+  KeyboardMapping k = k_; // in case we need to modify a copy as we go
+  if (k_.count == 0) {
+    // default empty map = linear map against scale, formal octave = scale equave
+    k.count = s.count;
+    k.octaveDegrees = s.count;
+    k.keys.clear();
+    for (int i = 0; i < k.count; ++i)
+      k.keys.push_back(i);
+  }
+  // int entryZero = (N / 2); // i.e. if 512 notes, start storing map at 256
+  int entryZero = 256;   
+  int entryMiddle = entryZero + k.middleNote;
+  int entryTCN = entryZero + k.tuningConstantNote;
+  bool TCNfoundInMap = false;
+  int justBelowTCN = 0;
+  int justAboveTCN = N;
+  int equaves[N];
+  /*
+  ** Assign scale degrees to each key
+  */
+	
+  for (int i = 0; i < N; ++i) {
     /*
-     * Finally we may have constructed an invalid tuning
-     */
+    ** Keep track of which mapped keys are closest to
+    ** tuning constant note
+    */
+    if (!TCNfoundInMap) {
+      TCNfoundInMap = (i == entryTCN);
+      if ((i > entryTCN) && (i > justBelowTCN)) justBelowTCN = i;
+      if ((i < entryTCN) && (i < justAboveTCN)) justAboveTCN = i;
+    }
+    int notes_from_middle = i - entryMiddle;
+		int map_lookup = k.keys[modulo(notes_from_middle,k.count)];
+		if (map_lookup < 0) {
+      equaves[i] = 0;
+      scalepositiontable[i] = -1;
+    } else {  
+      int map_period = (notes_from_middle - (int)modulo(notes_from_middle,k.count)) / k.count;
+		  int map_degrees = map_lookup + map_period * k.octaveDegrees;
+		  scalepositiontable[i] = (int)modulo(map_degrees, s.count);
+      equaves[i] = (map_degrees - scalepositiontable[i]) / s.count;  
+		}
+  }
+  /*
+  ** Use the tuning anchor note to set the pitch of the middle key
+  ** If tuning center is on an unmapped note (and if that's allowed),
+  ** pretend the nearest mapped notes are tuned so that the
+  ** unmapped note would interpolate to the assigned frequency
+  */
+  if (!TCNfoundInMap && !allowTuningCenterOnUnmapped)
+    throw TuningError(
+      "Keyboard mapping is tuning an unmapped key. "
+      "Your tuning mapping is mapping key "
+      + std::to_string(k.tuningConstantNote) 
+      + " as the tuning constant note, which your mapping does not assign. "
+      "Please set your tuning constant note to a mapped key."
+    );
+  int mappedTCN = entryTCN;     // i.e. 256 + k.TuningConstantNote
+	double TCN_position_in_span;
+  if (!TCNfoundInMap) {
+    mappedTCN = justBelowTCN;
+    TCN_position_in_span = (double)(entryTCN - justBelowTCN) / (double)(justAboveTCN - justBelowTCN);
+  }
+  /*
+  ** the tuning frequency is for a note that is X.xxx octaves above
+  ** the root of the scale in the same octave as the middle note of the layout
+  ** ...which is not always the same as the 1st key of the layout, if the first
+  ** note of the mapping is not zero. the floatValue here returns the value of X.xxx
+  */
+  double equave_lp = s.tones[s.count - 1].floatValue - 1.0;
+  double TCN_lp = (equave_lp * equaves[mappedTCN]) 
+    + (s.tones[scalepositiontable[mappedTCN]].floatValue - 1.0);
+  if (!TCNfoundInMap) { 
+    double justAbove_lp = (equave_lp * equaves[justAboveTCN]) 
+      + (s.tones[scalepositiontable[justAboveTCN]].floatValue - 1.0);
+    TCN_lp += TCN_position_in_span * (justAbove_lp - TCN_lp);
+  }
+  double middleRoot_lp = (log(k.tuningPitch) / log(2)) - TCN_lp;
+  /*
+  ** we can now assign a pitch to all other mapped keys.
+  */
+  for (int i = 0; i < N; ++i) {
+    if (scalepositiontable[i] < 0) {
+      lptable[i] = 0;
+      ptable[i] = 0;
+    } else {
+      lptable[i] = middleRoot_lp + (equave_lp * equaves[i]) 
+        + (s.tones[scalepositiontable[i]].floatValue - 1.0);
+      ptable[i] = pow(2.0, lptable[i]);
+    }
+  }
 }
 
 inline double Tuning::frequencyForMidiNote(int mn) const
